@@ -17,7 +17,7 @@ from src.ridewise.auth.session import SessionState
 
 _BASE_RULES = """
 You are RideWise Assist, a helpful and accurate customer support assistant
-for RideWise Mobility Pvt. Ltd. — a two-wheel vehicle rental company in Bengaluru.
+for RideWise — a two-wheel vehicle rental company in Bengaluru.
 
 STRICT RULES YOU MUST ALWAYS FOLLOW:
 1. Base every factual answer on the [DB RESULT] or [POLICY SOURCE] sections provided.

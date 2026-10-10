@@ -1,6 +1,6 @@
 # RideWise Assist
 
-AI-powered conversational assistant for RideWise Mobility — NeoStats AI Engineer Intern Hackathon.
+AI-powered conversational assistant for RideWise — NeoStats AI Engineer Intern Hackathon.
 
 Answers questions about bookings, payments, damage claims, and rental policies using a local SQLite database and a hybrid RAG system over five policy documents.
 

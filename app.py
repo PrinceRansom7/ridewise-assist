@@ -120,9 +120,14 @@ html, body, [class*="css"] {
     border: 1px solid #334155 !important;
     border-radius: 10px !important;
 }
-.stButton button {
+.stButton button, [data-testid="stFormSubmitButton"] button {
     border-radius: 8px !important;
     font-weight: 600 !important;
+}
+
+[data-testid="stForm"] {
+    border: none !important;
+    padding: 0 !important;
 }
 
 /* Divider */
@@ -202,34 +207,46 @@ def render_sidebar():
 
         # ── Customer login ─────────────────────────────────────────────────────
         if role_choice == "Customer":
-            st.markdown("#### Customer Login")
-            cid_input = st.text_input(
-                "Customer ID", placeholder="e.g. CUST0001", key="cid_input"
-            )
-            if st.button("🔑 Log in", key="login_btn"):
-                record = _verify_customer(cid_input)
-                if record:
-                    session.role = SessionRole.CUSTOMER
-                    session.customer_id = record["customer_id"]
-                    session.customer_name = record["full_name"]
-                    session.customer_tier = record["customer_tier"]
-                    session.clear_history()
-                    st.success(f"Welcome, {record['full_name']}!")
-                    time.sleep(0.5)
-                    st.rerun()
-                else:
-                    st.error("Customer ID not found. Please check and try again.")
+            if not session.is_authenticated or not session.is_customer:
+                st.markdown("#### Customer Login")
+                with st.form("customer_login_form", clear_on_submit=False, border=False):
+                    cid_input = st.text_input(
+                        "Customer ID", placeholder="e.g. CUST0001", key="cid_input"
+                    )
+                    login_btn = st.form_submit_button("🔑 Log in", use_container_width=True)
+
+                if login_btn:
+                    if not cid_input.strip():
+                        st.warning("Please enter a Customer ID.")
+                    else:
+                        record = _verify_customer(cid_input.strip())
+                        if record:
+                            session.role = SessionRole.CUSTOMER
+                            session.customer_id = record["customer_id"]
+                            session.customer_name = record["full_name"]
+                            session.customer_tier = record["customer_tier"]
+                            session.clear_history()
+                            st.success(f"Welcome, {record['full_name']}!")
+                            time.sleep(0.5)
+                            st.rerun()
+                        else:
+                            st.error("Customer ID not found. Please check and try again.")
 
         # ── Agent login ────────────────────────────────────────────────────────
         elif role_choice == "Support Agent":
-            agent_name = st.text_input("Agent name / ID", placeholder="e.g. Agent-01", key="agent_input")
-            if st.button("🔑 Start agent session", key="agent_btn"):
-                session.role = SessionRole.AGENT
-                session.agent_id = agent_name.strip() or "Agent"
-                session.clear_history()
-                st.success(f"Agent session started — {session.agent_id}")
-                time.sleep(0.5)
-                st.rerun()
+            if not session.is_authenticated or not session.is_agent:
+                st.markdown("#### Support Agent Login")
+                with st.form("agent_login_form", clear_on_submit=False, border=False):
+                    agent_name = st.text_input("Agent name / ID", placeholder="e.g. Agent-01", key="agent_input")
+                    agent_btn = st.form_submit_button("🔑 Start agent session", use_container_width=True)
+
+                if agent_btn:
+                    session.role = SessionRole.AGENT
+                    session.agent_id = agent_name.strip() or "Agent"
+                    session.clear_history()
+                    st.success(f"Agent session started — {session.agent_id}")
+                    time.sleep(0.5)
+                    st.rerun()
 
         # ── Session info ───────────────────────────────────────────────────────
         if session.is_authenticated:
@@ -286,7 +303,7 @@ def render_chat():
         <div class="rw-logo">🛵</div>
         <div>
             <p class="rw-title">RideWise Assist</p>
-            <p class="rw-subtitle">AI-powered support for RideWise Mobility customers and agents</p>
+            <p class="rw-subtitle">AI-powered support for RideWise customers and agents</p>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -349,17 +366,18 @@ def render_chat():
 
     # ── Input area ────────────────────────────────────────────────────────────
     st.markdown("---")
-    col_input, col_send = st.columns([6, 1])
+    with st.form("chat_form", clear_on_submit=True, border=False):
+        col_input, col_send = st.columns([6, 1])
 
-    with col_input:
-        user_input = st.text_input(
-            "Message",
-            placeholder="Ask about your bookings, payments, policies…",
-            label_visibility="collapsed",
-            key="user_input",
-        )
-    with col_send:
-        send_clicked = st.button("Send ➤", key="send_btn", use_container_width=True)
+        with col_input:
+            user_input = st.text_input(
+                "Message",
+                placeholder="Ask about your bookings, payments, policies…",
+                label_visibility="collapsed",
+                key="user_msg_input",
+            )
+        with col_send:
+            send_clicked = st.form_submit_button("Send ➤", use_container_width=True)
 
     # ── Handle send ───────────────────────────────────────────────────────────
     if send_clicked and user_input.strip():

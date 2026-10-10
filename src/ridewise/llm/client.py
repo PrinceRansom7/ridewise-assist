@@ -12,6 +12,7 @@ Security rules (enforced here, not in the LLM)
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
