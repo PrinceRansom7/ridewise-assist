@@ -322,6 +322,54 @@ def _maybe_calculate(
     return "\n".join(results)
 
 
+# ── Source attribution helper ──────────────────────────────────────────────────
+
+def _format_sources(
+    used_db: bool,
+    retrieved_chunks: list[dict],
+    used_calc: bool,
+    sql_query: Optional[str] = None,
+) -> str:
+    """Format an authoritative source attribution block."""
+    sources = []
+
+    if used_db:
+        tables = []
+        if sql_query:
+            lower_sql = sql_query.lower()
+            for t in ["customers", "bookings", "vehicles", "payments", "damage_reports"]:
+                if t in lower_sql:
+                    tables.append(t)
+        tbl_str = f" (`{', '.join(tables)}`)" if tables else ""
+        sources.append(f"🗄️ **Database:** SQLite `ridewise.db`{tbl_str}")
+
+    if retrieved_chunks:
+        doc_refs = []
+        seen = set()
+        for c in retrieved_chunks:
+            src = c.get("source_file", "Policy Document")
+            pg = c.get("page_number")
+            key = (src, pg)
+            if key not in seen:
+                seen.add(key)
+                pg_str = f", p. {pg}" if pg else ""
+                doc_refs.append(f"`{src}`{pg_str}")
+        if doc_refs:
+            sources.append(f"📄 **Policy:** {'; '.join(doc_refs)}")
+
+    if used_calc:
+        sources.append("🧮 **Calculation:** Deterministic business logic calculation engine")
+
+    if not sources:
+        return ""
+
+    if len(sources) == 1:
+        return f"\n\n---\n**Source:** {sources[0]}"
+    else:
+        bullets = "\n".join(f"- {s}" for s in sources)
+        return f"\n\n---\n**Sources:**\n{bullets}"
+
+
 # ── Main router ───────────────────────────────────────────────────────────────
 
 def process_message(user_msg: str, session: SessionState) -> str:
@@ -348,6 +396,8 @@ def process_message(user_msg: str, session: SessionState) -> str:
     policy_context_str = ""
     calc_result_str = ""
     db_rows: list[dict] = []
+    retrieved_chunks: list[dict] = []
+    sql: Optional[str] = None
 
     # ── Greeting: respond directly, no tool calls ──────────────────────────────
     if intent["is_greeting"] and not intent["needs_db"] and not intent["needs_policy"]:
@@ -368,7 +418,9 @@ def process_message(user_msg: str, session: SessionState) -> str:
     if intent["needs_policy"] or intent["needs_calc"] or (not intent["needs_db"] and not intent["is_greeting"]):
         try:
             chunks = retrieve(user_msg)
-            policy_context_str = format_chunks_for_llm(chunks)
+            if chunks:
+                retrieved_chunks = chunks
+                policy_context_str = format_chunks_for_llm(chunks)
         except Exception as exc:
             policy_context_str = ""
 
@@ -388,4 +440,15 @@ def process_message(user_msg: str, session: SessionState) -> str:
     messages = list(session.history) + [{"role": "user", "content": evidence_message}]
 
     response = chat(messages, system_prompt=system_prompt)
+
+    # ── Append authoritative source attribution for factual responses ─────────
+    if not response.startswith("⚠️"):
+        source_block = _format_sources(
+            used_db=bool(db_result_str),
+            retrieved_chunks=retrieved_chunks,
+            used_calc=bool(calc_result_str),
+            sql_query=sql,
+        )
+        response = response + source_block
+
     return response
