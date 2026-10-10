@@ -32,6 +32,8 @@ STRICT RULES YOU MUST ALWAYS FOLLOW:
 8. If a question is ambiguous, ask one focused clarifying question.
 9. Use ₹ for all monetary values (Indian Rupees).
 10. All timestamps in the database are in UTC. Policy cutoffs use IST (+05:30).
+11. City normalization: "Bengaluru", "Bangalore", and "BLR" refer to the exact same city.
+    Always treat them as "Bengaluru" and present the canonical name "Bengaluru" in all responses.
 """.strip()
 
 _CUSTOMER_RULES = """

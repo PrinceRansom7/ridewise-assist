@@ -13,6 +13,7 @@ from pathlib import Path
 # Make config importable regardless of working directory
 sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
 from config.settings import DB_PATH
+from src.ridewise.database.city import normalize_city
 
 
 def get_connection() -> sqlite3.Connection:
@@ -26,7 +27,7 @@ def get_connection() -> sqlite3.Connection:
     uri = f"file:{DB_PATH}?mode=ro"
     con = sqlite3.connect(uri, uri=True, check_same_thread=False)
     con.row_factory = sqlite3.Row
-    # Enforce a statement-level timeout via the progress handler
+    con.create_function("normalize_city", 1, normalize_city)
     return con
 
 

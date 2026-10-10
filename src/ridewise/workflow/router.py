@@ -24,6 +24,7 @@ from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from src.ridewise.auth.session import SessionRole, SessionState
+from src.ridewise.database.city import extract_city_from_text, normalize_city
 from src.ridewise.database.sql_tool import format_result_for_llm, run_query
 from src.ridewise.llm.client import chat
 from src.ridewise.llm.prompts import build_rag_message, build_system_prompt
@@ -37,6 +38,8 @@ _DB_KEYWORDS = {
     "damage", "report", "claim", "status", "history", "account", "profile",
     "wallet", "deposit", "penalty", "late fee", "cancell", "cancel",
     "scheduled", "return", "pickup", "hub", "balance",
+    "city", "cities", "location", "locations", "bengaluru", "bangalore", "blr",
+    "chennai", "hyderabad", "mysuru", "mysore", "mangaluru", "mangalore", "pune",
 }
 
 _POLICY_KEYWORDS = {
@@ -78,15 +81,32 @@ def _classify(text: str) -> dict[str, bool]:
 
 # ── SQL query builder helpers ─────────────────────────────────────────────────
 
-def _build_customer_sql(session: SessionState) -> Optional[str]:
+def _build_customer_sql(session: SessionState, user_msg: str = "") -> Optional[str]:
     """
-    Build a comprehensive SQL query for a customer's recent data.
+    Build a comprehensive SQL query for a customer's data.
     The ownership filter will be injected by sql_tool.run_query.
     """
     if not session.customer_id:
         return None
-    return """
+
+    lower = user_msg.lower()
+    is_profile_q = any(kw in lower for kw in ["city", "profile", "account", "address", "email", "phone", "kyc", "tier"])
+    has_booking_kw = any(kw in lower for kw in ["booking", "rental", "ride", "trip", "damage", "claim", "payment"])
+
+    # If asking strictly about account profile or city, query customer record directly
+    if is_profile_q and not has_booking_kw:
+        return f"""
+            SELECT
+                c.customer_id, c.full_name, c.email, c.phone,
+                normalize_city(c.city) AS city,
+                c.customer_tier, c.kyc_status, c.created_at
+            FROM customers c
+            WHERE c.customer_id = '{session.customer_id}'
+        """
+
+    return f"""
         SELECT
+            c.customer_id, c.full_name, normalize_city(c.city) AS city, c.customer_tier,
             b.booking_id, b.booking_status, b.scheduled_start, b.scheduled_end,
             b.actual_return_at, b.cancelled_at, b.return_battery_pct,
             v.model, v.vehicle_type, v.hub_name, v.hourly_rate, v.daily_rate,
@@ -94,20 +114,75 @@ def _build_customer_sql(session: SessionState) -> Optional[str]:
             p.payment_method, p.paid_at, p.remarks,
             d.report_id, d.damage_category, d.severity, d.assessed_cost,
             d.claim_status, d.description AS damage_description
-        FROM bookings b
-        JOIN vehicles v ON b.vehicle_id = v.vehicle_id
+        FROM customers c
+        LEFT JOIN bookings b ON b.customer_id = c.customer_id
+        LEFT JOIN vehicles v ON b.vehicle_id = v.vehicle_id
         LEFT JOIN payments p ON p.booking_id = b.booking_id
         LEFT JOIN damage_reports d ON d.booking_id = b.booking_id
+        WHERE c.customer_id = '{session.customer_id}'
         ORDER BY b.scheduled_start DESC
     """
 
 
 def _build_agent_general_sql(user_msg: str) -> Optional[str]:
     """
-    For agent sessions, return a broad query if the question mentions
-    specific booking IDs, customer IDs, or vehicle IDs.
+    For agent sessions, return targeted queries for IDs, city breakdowns,
+    or general cross-customer operational records.
     """
-    # Look for explicit IDs in the message
+    lower = user_msg.lower()
+
+    # 1. City breakdown / aggregation (e.g. "customers by city", "city breakdown")
+    if any(kw in lower for kw in ["by city", "per city", "each city", "all cities", "city breakdown", "across cities"]):
+        return """
+            SELECT
+                normalize_city(city) AS city,
+                COUNT(*) AS customer_count
+            FROM customers
+            GROUP BY normalize_city(city)
+            ORDER BY customer_count DESC
+        """
+
+    # 2. Check for specific city mentions (Bengaluru, Bangalore, BLR, Chennai, etc.)
+    matched_city = extract_city_from_text(user_msg)
+    if matched_city:
+        is_count = any(kw in lower for kw in ["how many", "count", "number of", "total"])
+        is_customer_q = any(kw in lower for kw in ["customer", "customers", "user", "users", "people"])
+
+        if is_count and is_customer_q:
+            return f"""
+                SELECT
+                    normalize_city(city) AS city,
+                    COUNT(*) AS customer_count
+                FROM customers
+                WHERE normalize_city(city) = '{matched_city}'
+                GROUP BY normalize_city(city)
+            """
+        elif is_customer_q:
+            return f"""
+                SELECT
+                    customer_id, full_name, email, phone,
+                    normalize_city(city) AS city,
+                    customer_tier, kyc_status, created_at
+                FROM customers
+                WHERE normalize_city(city) = '{matched_city}'
+                ORDER BY created_at DESC
+            """
+        else:
+            # Query bookings in that city
+            return f"""
+                SELECT
+                    b.booking_id, b.customer_id, c.full_name,
+                    normalize_city(c.city) AS city, c.customer_tier,
+                    b.booking_status, b.scheduled_start, b.scheduled_end,
+                    v.model, v.hub_name
+                FROM bookings b
+                JOIN customers c ON b.customer_id = c.customer_id
+                JOIN vehicles v ON b.vehicle_id = v.vehicle_id
+                WHERE normalize_city(c.city) = '{matched_city}'
+                ORDER BY b.scheduled_start DESC
+            """
+
+    # 3. Look for explicit IDs in the message
     booking_ids = re.findall(r"\bB-\d{4}\b", user_msg, re.IGNORECASE)
     customer_ids = re.findall(r"\bCUST\d{4}\b", user_msg, re.IGNORECASE)
     vehicle_ids = re.findall(r"\bVEH\d{3}\b", user_msg, re.IGNORECASE)
@@ -127,7 +202,8 @@ def _build_agent_general_sql(user_msg: str) -> Optional[str]:
 
     return f"""
         SELECT
-            b.booking_id, b.customer_id, c.full_name, c.customer_tier,
+            b.booking_id, b.customer_id, c.full_name,
+            normalize_city(c.city) AS city, c.customer_tier,
             b.booking_status, b.scheduled_start, b.scheduled_end,
             b.actual_return_at, b.cancelled_at, b.return_battery_pct,
             v.model, v.vehicle_type, v.hub_name, v.hourly_rate,
@@ -276,7 +352,7 @@ def process_message(user_msg: str, session: SessionState) -> str:
     # ── SQL tool ───────────────────────────────────────────────────────────────
     if intent["needs_db"]:
         if session.is_customer:
-            sql = _build_customer_sql(session)
+            sql = _build_customer_sql(session, user_msg)
         else:
             sql = _build_agent_general_sql(user_msg)
 

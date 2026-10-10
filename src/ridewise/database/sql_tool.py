@@ -28,10 +28,11 @@ from typing import Any, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from config.settings import ALLOWED_TABLES, SQL_MAX_ROWS, SQL_TIMEOUT
 from src.ridewise.auth.session import SessionRole, SessionState
+from src.ridewise.database.city import normalize_city
 from src.ridewise.database.db import get_connection
 
 # Tables whose rows must always be filtered by customer_id for customer sessions
-CUSTOMER_OWNED_TABLES: set[str] = {"bookings", "payments", "damage_reports"}
+CUSTOMER_OWNED_TABLES: set[str] = {"bookings", "payments", "damage_reports", "customers"}
 
 # Columns that identify the customer_id in each customer-owned table
 # (used for ownership enforcement when that table is the target/joined)
@@ -39,6 +40,7 @@ CUSTOMER_ID_COLUMN_MAP: dict[str, str] = {
     "bookings": "bookings.customer_id",
     "payments": "bookings.customer_id",       # via JOIN bookings
     "damage_reports": "bookings.customer_id", # via JOIN bookings
+    "customers": "customers.customer_id",
 }
 
 
@@ -187,9 +189,19 @@ def _enforce_customer_ownership(sql: str, customer_id: str) -> tuple[str, list]:
     if not owned:
         return sql, []
 
-    # Detect the alias used for bookings (e.g. 'b' in 'FROM bookings b')
-    bookings_ref = _extract_alias(sql, "bookings")
-    ownership_column = f"{bookings_ref}.customer_id"
+    # Detect the alias used for whichever owned table is present
+    if "bookings" in referenced:
+        target_ref = _extract_alias(sql, "bookings")
+    elif "customers" in referenced:
+        target_ref = _extract_alias(sql, "customers")
+    elif "payments" in referenced:
+        target_ref = _extract_alias(sql, "payments")
+    elif "damage_reports" in referenced:
+        target_ref = _extract_alias(sql, "damage_reports")
+    else:
+        return sql, []
+
+    ownership_column = f"{target_ref}.customer_id"
     ownership_clause = f"{ownership_column} = ?"
 
     pre_clauses, post_clauses = _find_clause_split(sql)
@@ -269,7 +281,12 @@ def run_query(
             rows_raw = cur.fetchall()
             columns = [d[0] for d in cur.description] if cur.description else []
             truncated = len(rows_raw) > SQL_MAX_ROWS
-            rows = [dict(r) for r in rows_raw[:SQL_MAX_ROWS]]
+            rows = []
+            for r in rows_raw[:SQL_MAX_ROWS]:
+                d = dict(r)
+                if "city" in d and d["city"]:
+                    d["city"] = normalize_city(d["city"])
+                rows.append(d)
             con.close()
             result["columns"] = columns
             result["rows"] = rows
