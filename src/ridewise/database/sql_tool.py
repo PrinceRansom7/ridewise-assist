@@ -25,7 +25,7 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from config.settings import ALLOWED_TABLES, SQL_MAX_ROWS, SQL_TIMEOUT
 from src.ridewise.auth.session import SessionRole, SessionState
 from src.ridewise.database.db import get_connection
@@ -94,6 +94,14 @@ def _validate_tables(referenced: set[str]) -> Optional[str]:
     return None
 
 
+# All SQL keywords that may follow a table name — must not be treated as aliases
+_SQL_KEYWORDS = {
+    "WHERE", "ON", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "FULL",
+    "CROSS", "SET", "ORDER", "GROUP", "HAVING", "LIMIT", "OFFSET",
+    "UNION", "EXCEPT", "INTERSECT", "AS", "BY", "ASC", "DESC",
+}
+
+
 def _extract_alias(sql: str, table_name: str) -> str:
     """
     Return the alias used for a table in the SQL, or the table name itself.
@@ -106,20 +114,71 @@ def _extract_alias(sql: str, table_name: str) -> str:
     match = pattern.search(sql)
     if match:
         alias = match.group(1).upper()
-        # Make sure it's not a SQL keyword used after the table name
-        if alias not in {"WHERE", "ON", "JOIN", "LEFT", "INNER", "OUTER", "SET", "ORDER", "GROUP", "HAVING"}:
+        if alias not in _SQL_KEYWORDS:
             return match.group(1)
     return table_name
+
+
+def _find_clause_split(sql: str) -> tuple[str, str]:
+    """
+    Split SQL into (pre_clauses, post_clauses).
+    post_clauses contains any trailing GROUP BY, HAVING, ORDER BY, LIMIT, or OFFSET
+    that must appear AFTER the WHERE clause.
+    Only matches at parenthesis depth 0 to avoid splitting subqueries.
+    """
+    pattern = re.compile(
+        r"\b(GROUP\s+BY|HAVING|ORDER\s+BY|LIMIT|OFFSET)\b",
+        re.IGNORECASE,
+    )
+    paren_depth = 0
+    in_single_quote = False
+    in_double_quote = False
+
+    for i, ch in enumerate(sql):
+        if ch == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif ch == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        elif not in_single_quote and not in_double_quote:
+            if ch == '(':
+                paren_depth += 1
+            elif ch == ')':
+                paren_depth = max(0, paren_depth - 1)
+            elif paren_depth == 0:
+                m = pattern.match(sql, i)
+                if m:
+                    return sql[:i].rstrip(), sql[i:]
+
+    return sql.rstrip(), ""
+
+
+def _has_top_level_where(sql_part: str) -> bool:
+    """Check if top-level WHERE clause exists in the given SQL segment."""
+    pattern = re.compile(r"\bWHERE\b", re.IGNORECASE)
+    paren_depth = 0
+    in_single_quote = False
+    in_double_quote = False
+
+    for i, ch in enumerate(sql_part):
+        if ch == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif ch == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        elif not in_single_quote and not in_double_quote:
+            if ch == '(':
+                paren_depth += 1
+            elif ch == ')':
+                paren_depth = max(0, paren_depth - 1)
+            elif paren_depth == 0:
+                if pattern.match(sql_part, i):
+                    return True
+    return False
 
 
 def _enforce_customer_ownership(sql: str, customer_id: str) -> tuple[str, list]:
     """
     Inject a customer_id filter for queries that touch owned tables.
-
-    Strategy: wrap the entire query in a subquery and add a WHERE clause
-    that checks bookings.customer_id (or its alias). If no owned table is
-    referenced, the SQL is returned unchanged.
-
+    Guarantees WHERE is placed before GROUP BY, HAVING, ORDER BY, and LIMIT.
     Returns (modified_sql, extra_params).
     """
     referenced = _extract_referenced_tables(sql)
@@ -131,18 +190,20 @@ def _enforce_customer_ownership(sql: str, customer_id: str) -> tuple[str, list]:
     # Detect the alias used for bookings (e.g. 'b' in 'FROM bookings b')
     bookings_ref = _extract_alias(sql, "bookings")
     ownership_column = f"{bookings_ref}.customer_id"
-
-    # Ensure bookings is joined if only payments/damage_reports are referenced
-    # (both tables link to customer via bookings.customer_id)
-    norm = sql.upper()
-
-    # Build ownership filter using the detected alias (e.g. 'b.customer_id')
     ownership_clause = f"{ownership_column} = ?"
 
-    if "WHERE" in norm:
-        modified = sql.rstrip().rstrip(";") + f" AND {ownership_clause}"
+    pre_clauses, post_clauses = _find_clause_split(sql)
+    pre_clauses = pre_clauses.rstrip().rstrip(";")
+
+    if _has_top_level_where(pre_clauses):
+        modified_pre = f"{pre_clauses} AND {ownership_clause}"
     else:
-        modified = sql.rstrip().rstrip(";") + f" WHERE {ownership_clause}"
+        modified_pre = f"{pre_clauses} WHERE {ownership_clause}"
+
+    if post_clauses:
+        modified = f"{modified_pre} {post_clauses}"
+    else:
+        modified = modified_pre
 
     return modified, [customer_id]
 

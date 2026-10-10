@@ -269,8 +269,10 @@ def render_sidebar():
             st.warning(f"📚 Policy index: not ready\n\n`{retrieval_err[:80]}`")
             st.info("Run `python scripts/ingest_documents.py` to build the index.")
 
-        db_ok = DB_PATH.exists()
-        st.success("🗄️ Database: connected") if db_ok else st.error("🗄️ Database: not found")
+        if DB_PATH.exists():
+            st.success("🗄️ Database: connected")
+        else:
+            st.error("🗄️ Database: not found")
 
 
 # ── Main chat area ────────────────────────────────────────────────────────────

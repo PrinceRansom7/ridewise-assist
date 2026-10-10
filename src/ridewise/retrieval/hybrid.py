@@ -19,7 +19,7 @@ from typing import Optional
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from config.settings import (
     BM25_INDEX_PATH,
     CHUNKS_PATH,

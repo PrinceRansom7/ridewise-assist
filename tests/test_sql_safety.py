@@ -114,6 +114,28 @@ class TestCustomerOwnershipEnforcement:
         for row in result["rows"]:
             assert row["customer_id"] == "CUST0001"
 
+    def test_customer_query_with_order_by(self):
+        """ORDER BY must not cause syntax error when WHERE is injected."""
+        session = customer_session("CUST0001")
+        result = run_query(
+            "SELECT b.booking_id, b.customer_id FROM bookings b ORDER BY b.scheduled_start DESC",
+            session=session,
+        )
+        assert result["error"] is None
+        for row in result["rows"]:
+            assert row["customer_id"] == "CUST0001"
+
+    def test_customer_query_with_where_and_order_by(self):
+        """WHERE + ORDER BY + LIMIT must all preserve correct SQL order."""
+        session = customer_session("CUST0001")
+        result = run_query(
+            "SELECT b.booking_id, b.customer_id FROM bookings b WHERE b.booking_status = 'CMP' ORDER BY b.scheduled_start DESC LIMIT 5",
+            session=session,
+        )
+        assert result["error"] is None
+        for row in result["rows"]:
+            assert row["customer_id"] == "CUST0001"
+
 
 class TestParameterizationAndInjection:
     def test_basic_parameterized_query(self):

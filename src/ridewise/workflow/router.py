@@ -22,7 +22,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from src.ridewise.auth.session import SessionRole, SessionState
 from src.ridewise.database.sql_tool import format_result_for_llm, run_query
 from src.ridewise.llm.client import chat

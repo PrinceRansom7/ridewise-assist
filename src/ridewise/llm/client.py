@@ -17,29 +17,26 @@ import time
 from pathlib import Path
 from typing import Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
-from config.settings import (
-    LLM_MAX_RETRIES,
-    LLM_TIMEOUT,
-    OPENAI_API_KEY,
-    OPENAI_BASE_URL,
-    OPENAI_DEPLOYMENT,
-    OPENAI_MODEL,
-)
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+import config.settings as settings
 
 
 def _get_client():
     """Return a configured OpenAI client. Raises if key is missing."""
     from openai import OpenAI
 
-    if not OPENAI_API_KEY:
+    api_key = settings.OPENAI_API_KEY or os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
         raise ValueError(
             "OPENAI_API_KEY is not set. Add it to your .env file."
         )
     return OpenAI(
-        api_key=OPENAI_API_KEY,
-        base_url=OPENAI_BASE_URL,
-        timeout=LLM_TIMEOUT,
+        api_key=api_key,
+        base_url=settings.OPENAI_BASE_URL,
+        timeout=settings.LLM_TIMEOUT,
         max_retries=0,  # we handle retries manually for better UX
     )
 
@@ -70,17 +67,17 @@ def chat(
     full_messages.extend(messages)
 
     last_error = ""
-    for attempt in range(1, LLM_MAX_RETRIES + 2):
+    for attempt in range(1, settings.LLM_MAX_RETRIES + 2):
         try:
             response = client.chat.completions.create(
-                model=OPENAI_DEPLOYMENT,
+                model=settings.OPENAI_DEPLOYMENT,
                 messages=full_messages,
                 temperature=temperature,
             )
             return response.choices[0].message.content or ""
         except Exception as exc:
             last_error = str(exc)
-            if attempt <= LLM_MAX_RETRIES:
+            if attempt <= settings.LLM_MAX_RETRIES:
                 time.sleep(2 ** attempt)  # exponential backoff: 2s, 4s
             continue
 
