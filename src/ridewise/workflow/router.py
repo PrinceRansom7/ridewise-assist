@@ -44,12 +44,14 @@ _DB_KEYWORDS = {
 }
 
 _POLICY_KEYWORDS = {
-    "policy", "rule", "refund", "cancell", "how much", "what is the fee",
-    "what happens", "grace", "tier", "gold", "silver", "standard",
-    "late", "battery", "ev", "electric", "percent", "%", "hours", "threshold",
-    "kyc", "eligib", "deposit", "no-show", "noshow", "gst", "tax",
-    "damage", "scratch", "claim", "waived", "charged", "disputed",
-    "version", "effective", "when does", "allowed", "permitted",
+    "policy", "policies", "rule", "rules", "refund", "refunds", "cancel", "cancelling", "cancellation",
+    "cancelleation", "cancell", "how much", "what is the fee", "what happens", "grace", "tier", "gold",
+    "silver", "standard", "late", "battery", "ev", "electric", "percent", "%", "hour", "hours",
+    "threshold", "kyc", "eligib", "deposit", "deposits", "no-show", "noshow", "gst", "tax",
+    "damage", "scratch", "claim", "claims", "waived", "charged", "disputed", "version", "effective",
+    "when does", "allowed", "permitted", "insurance", "terms", "agreement", "doc", "docs",
+    "document", "documents", "summary", "summarize", "guide", "faq", "faq's", "coverage", "fee", "fees",
+    "clause", "clauses", "requirement", "requirements", "latest",
 }
 
 _CALC_KEYWORDS = {
@@ -69,8 +71,11 @@ def _classify(text: str) -> dict[str, bool]:
 
     is_greeting = bool(_GREETING_PATTERNS.match(text))
     needs_db = bool(words & _DB_KEYWORDS) and not is_greeting
-    needs_policy = bool(words & _POLICY_KEYWORDS) and not is_greeting
-    needs_calc = bool(words & _CALC_KEYWORDS)
+    needs_policy = (
+        bool(words & _POLICY_KEYWORDS)
+        or any(kw in lower for kw in _POLICY_KEYWORDS)
+    ) and not is_greeting
+    needs_calc = bool(words & _CALC_KEYWORDS) or any(kw in lower for kw in _CALC_KEYWORDS)
 
     return {
         "is_greeting": is_greeting,
@@ -360,16 +365,12 @@ def process_message(user_msg: str, session: SessionState) -> str:
             db_rows = result.get("rows", [])
 
     # ── RAG tool ───────────────────────────────────────────────────────────────
-    if intent["needs_policy"] or intent["needs_calc"]:
+    if intent["needs_policy"] or intent["needs_calc"] or (not intent["needs_db"] and not intent["is_greeting"]):
         try:
             chunks = retrieve(user_msg)
             policy_context_str = format_chunks_for_llm(chunks)
-        except RuntimeError:
-            # Retrieval system not loaded — note it but continue
-            policy_context_str = (
-                "[POLICY SOURCE] Policy index not loaded. "
-                "Run ingest_documents.py and restart."
-            )
+        except Exception as exc:
+            policy_context_str = ""
 
     # ── Deterministic calculations ─────────────────────────────────────────────
     if intent["needs_calc"] and db_rows:

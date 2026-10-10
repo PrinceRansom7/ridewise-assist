@@ -154,12 +154,12 @@ _init_session()
 
 # ── Retrieval system startup ──────────────────────────────────────────────────
 
-@st.cache_resource(show_spinner=False)
 def _load_retrieval():
-    """Load retrieval system once at startup (cached across reruns)."""
+    """Ensure retrieval system is loaded and ready into memory."""
     try:
-        from src.ridewise.retrieval.hybrid import load_retrieval_system
-        load_retrieval_system()
+        from src.ridewise.retrieval.hybrid import is_ready, load_retrieval_system
+        if not is_ready():
+            load_retrieval_system()
         return True, ""
     except FileNotFoundError as exc:
         return False, str(exc)
