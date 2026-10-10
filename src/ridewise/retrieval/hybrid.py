@@ -172,14 +172,19 @@ def _rrf_merge(
     return sorted(scores.items(), key=lambda x: x[1], reverse=True)
 
 
+def is_ready() -> bool:
+    """Return True if chunks, BM25, and FAISS index are loaded and ready."""
+    return _chunks is not None and _bm25 is not None and _faiss_index is not None
+
+
 def retrieve(query: str, top_k: Optional[int] = None) -> list[dict]:
     """
     Retrieve the most relevant chunks for a query using hybrid RRF.
 
     Returns a list of chunk dicts with an added ``score`` field.
     """
-    if _chunks is None:
-        raise RuntimeError("Retrieval system not loaded. Call load_retrieval_system() first.")
+    if not is_ready():
+        load_retrieval_system()
 
     top_k = top_k or TOP_K
     n_candidates = min(len(_chunks), max(top_k * 5, 30))

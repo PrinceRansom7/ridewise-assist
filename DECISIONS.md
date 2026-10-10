@@ -13,7 +13,7 @@
 - LangGraph: adds ~200 lines of boilerplate and state schema definition with no runtime benefit for this use case
 - ReAct agent: would allow the LLM to decide which tools to call — but that means the LLM is making authorization decisions, which violates the security requirement that the backend enforces all access control
 
-**Known weakness:** Keyword classification can mis-route edge cases (e.g., "I want to know about my account" triggers policy retrieval unnecessarily). This is low-risk — wrong retrieval wastes tokens but does not produce wrong answers.
+**Known weakness:** Keyword classification can mis-route edge cases (e.g., "I want to know about my account" triggers policy retrieval unnecessarily). This is low-risk — extra retrieval wastes tokens but does not produce wrong answers.
 
 ---
 
@@ -55,18 +55,6 @@ Getting these wrong would produce wrong financial advice. pytesseract was not in
 
 ---
 
-## Failure Cases and Known Weaknesses
-
-| Weakness | Impact | Mitigation |
-|---|---|---|
-| Keyword router mis-classifies edge cases | Low — extra retrieval wastes tokens | Add a lightweight LLM classifier if budget allows |
-| SQL ownership filter is a best-effort heuristic | Medium — complex nested queries may not get filtered | Constrain allowed SQL patterns further; use a query builder |
-| No reranker | Low — RRF provides good ordering for 300 chunks | Add a cross-encoder if evaluation shows MRR < 0.5 |
-| Scanned annexure content is hardcoded | Medium — won't update automatically | Implement Docling OCR pipeline when torchvision is available |
-| LLM is the final response layer | Medium — can still hallucinate if evidence is weak | Add confidence gating and return "I don't know" if no evidence meets threshold |
-| No rate limiting on user queries | Low risk in hackathon context | Add st.session_state rate limiter in production |
-| `booked_at` is not stored in the router's DB query | Low — affects auto-calc trigger | Pass `booked_at` from the JOIN query result |
-
 ## Decision 4: Embedding-driven Schema Retrieval for Dynamic SQL Generation and Agent Visibility
 
 **Decision:** Embed the `data_dictionary.md` tables using `sentence-transformers/all-MiniLM-L6-v2` and compare user query embeddings to retrieve relevant schema tables. Construct targeted SQL queries dynamically while enforcing customer isolation and field-level PII masking.
@@ -79,18 +67,62 @@ Getting these wrong would produce wrong financial advice. pytesseract was not in
 
 ---
 
-## What I Would Improve Over the Next Week
+## Decision 5: Canonical City Normalization at Database and Application Layers
 
-1. **Replace the keyword router with a fast LLM classifier** — a single-token classification call (SQL / RAG / BOTH / GREETING) using the LLM would handle edge cases correctly and is cheap at ~50 tokens.
+**Decision:** Implement centralized city normalization in `src/ridewise/database/city.py` and register a custom SQLite function `normalize_city()` on every database connection.
 
-2. **Add a cross-encoder reranker** — evaluate the retrieval script output first; if Recall@1 is below 0.7, add `cross-encoder/ms-marco-MiniLM-L-6-v2` to rerank the top-6 candidates.
+**Rationale:**
+- Customer records contain inconsistent city strings (`"Bengaluru"`, `"Bangalore"`, `"BLR"`, `"Bangalore Urban"`, `"bengaluru"`).
+- Without normalization, aggregations like `GROUP BY city` fractured counts across identical geographic entities.
+- Registering `normalize_city` as a deterministic SQLite function allows seamless `GROUP BY normalize_city(city)` queries without modifying raw source database records.
+- User queries containing city variants are dynamically resolved to the canonical `"Bengaluru"` prior to SQL filtering and prompt construction.
 
-3. **Add conversation memory trimming** — the current design passes the full history in every LLM call. For long conversations, trim to the last 10 turns + system prompt.
+---
 
-4. **Upgrade to `bge-m3`** — with GPU or more RAM, this would improve recall on paraphrased and multilingual queries.
+## Decision 6: Deterministic Financial Calculations via Decimal Python Engines
 
-5. **Implement proper OCR for scanned pages** — use Docling's built-in OCR pipeline once `torchvision` is installed, and validate against the pre-verified strings.
+**Decision:** Implement refund schedules, late-return fees, and EV battery penalty calculations as pure deterministic Python functions using `decimal.Decimal` in `src/ridewise/business_logic/calculations.py`, completely separate from the LLM.
 
-6. **Add a Streamlit admin view** — let agents see database stats, retrieval scores, and chunk sources for each answer (improves trust and debuggability).
+**Rationale:**
+- Large Language Models frequently make subtle arithmetic errors when calculating tier grace period offsets, partial-hour late ceilings, and 18% GST additions.
+- Exact financial reconciliation requires legal reproducibility:
+  - Cancellation refunds: Tier grace periods (Gold: 2h, Silver: 1h) and window slabs (>24h: 100%, 6–24h: 75%, 2–6h: 25%, <2h: 0%).
+  - Late return fees: Exact hourly rate ceiling calculation + 18% statutory GST.
+  - EV low-battery penalties: Strict tier percentage thresholds.
+- Pre-calculating results and passing them in `[CALCULATION RESULT]` ensures the LLM acts purely as a synthesizer rather than an unverified calculator.
 
-7. **Write end-to-end tests with a stubbed LLM** — the current tests cover calculations and SQL safety but not the full LLM response flow.
+---
+
+## Decision 7: Defense-in-Depth Privacy & Prompt-Injection Isolation
+
+**Decision:** Enforce isolation at every architectural boundary:
+1. **Connection Sandbox:** Database connections use SQLite URI `mode=ro` (read-only). All DDL/DML tokens (`INSERT`, `UPDATE`, `DROP`, `ALTER`, `;`, `--`) are rejected prior to execution.
+2. **Row-Level Security (RLS):** In customer sessions, SQL queries are dynamically parsed and injected with mandatory ownership clauses (`customer_id = 'SESSION_ID'`).
+3. **Field-Level Masking:** PII fields (`phone`, `email`, `driving_license_number`, `transaction_ref`) are sanitized via regex before results enter LLM context.
+4. **Tag Isolation:** Database and policy passages are strictly encapsulated within `[DB RESULT]` and `[POLICY SOURCE]` tags. The system prompt explicitly instructs the LLM to treat content within these tags as untrusted data rather than instructions.
+
+---
+
+## Decision 8: Self-Healing Hybrid RAG Lifecycle (Lazy Auto-Load)
+
+**Decision:** Implement on-demand initialization (`is_ready()` and `load_retrieval_system()`) inside `retrieve()` in `src/ridewise/retrieval/hybrid.py`.
+
+**Rationale:**
+- In Streamlit's multi-threaded worker model or across hot-reloads, global memory state (`_chunks`, `_bm25`, `_faiss_index`) could unbind while `@st.cache_resource` reported initialization.
+- Failing to auto-load raised silent `RuntimeError` exceptions, leading to empty `[POLICY SOURCE]` contexts in the UI.
+- The self-healing check verifies that `_chunks`, `_bm25`, and `_faiss_index` are active; if any are uninitialized, it seamlessly loads persisted indexes on the fly without user disruption.
+
+---
+
+## Failure Cases and Known Weaknesses
+
+| Weakness | Impact | Current Status & Mitigation |
+|---|---|---|
+| Keyword router mis-classifies edge cases | Low — extra retrieval wastes tokens | Intent keyword sets expanded; future: add fast 1-token LLM classifier |
+| Dynamic SQL customer isolation | High if unhandled | **Resolved:** Python AST/alias-aware `_enforce_customer_ownership` dynamically injects tenant filters on all tables |
+| Inconsistent city spelling in DB | Medium — broken aggregations | **Resolved:** `normalize_city()` SQLite function standardizes Bangalore/BLR into canonical `"Bengaluru"` |
+| Arithmetic & GST hallucination | High — incorrect financial advice | **Resolved:** Deterministic `Decimal` business logic engine in `calculations.py` calculates fees before LLM generation |
+| PII exposure in LLM prompt | High — regulatory violation | **Resolved:** Field-level masking in `sanitizer.py` redacts phone, email, driving license, and transaction refs |
+| Empty policy context on worker rebind | Medium — system reports policy unavailable | **Resolved:** Self-healing auto-load in `hybrid.py:retrieve()` ensures indexes load automatically on demand |
+| Scanned annexure content is hardcoded | Medium — won't update automatically | Verified static content for hackathon; future: implement Docling OCR pipeline |
+| No rate limiting on user queries | Low risk in hackathon context | Add `st.session_state` rate limiter in production |
