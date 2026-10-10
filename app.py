@@ -18,7 +18,7 @@ sys.path.insert(0, str(APP_DIR))
 from config.settings import DB_PATH
 from src.ridewise.auth.session import SessionRole, SessionState
 from src.ridewise.database.db import get_connection
-from src.ridewise.retrieval import is_ready, load_retrieval_system
+from src.ridewise.retrieval.hybrid import load_retrieval_system
 from src.ridewise.workflow.router import process_message
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -156,10 +156,9 @@ _init_session()
 # ── Retrieval system startup ──────────────────────────────────────────────────
 
 def _load_retrieval():
-    """Ensure retrieval system is loaded and ready into memory."""
+    """Ensure retrieval system is loaded into memory."""
     try:
-        if not is_ready():
-            load_retrieval_system()
+        load_retrieval_system()
         return True, ""
     except Exception as exc:
         return False, str(exc)

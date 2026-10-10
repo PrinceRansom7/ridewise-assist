@@ -127,7 +127,10 @@ def load_retrieval_system(force_rebuild: bool = False) -> None:
     Load chunks and indexes into memory.
     Call this once at application startup.
     """
-    global _chunks
+    global _chunks, _bm25, _faiss_index
+
+    if not force_rebuild and _chunks is not None and _bm25 is not None and _faiss_index is not None:
+        return
 
     # Load chunks
     if not CHUNKS_PATH.exists():
