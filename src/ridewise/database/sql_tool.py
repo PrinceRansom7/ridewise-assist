@@ -30,6 +30,7 @@ from config.settings import ALLOWED_TABLES, SQL_MAX_ROWS, SQL_TIMEOUT
 from src.ridewise.auth.session import SessionRole, SessionState
 from src.ridewise.database.city import normalize_city
 from src.ridewise.database.db import get_connection
+from src.ridewise.database.sanitizer import sanitize_row_for_role
 
 # Tables whose rows must always be filtered by customer_id for customer sessions
 CUSTOMER_OWNED_TABLES: set[str] = {"bookings", "payments", "damage_reports", "customers"}
@@ -281,12 +282,11 @@ def run_query(
             rows_raw = cur.fetchall()
             columns = [d[0] for d in cur.description] if cur.description else []
             truncated = len(rows_raw) > SQL_MAX_ROWS
+            caller_role = session.role if session else SessionRole.CUSTOMER
             rows = []
             for r in rows_raw[:SQL_MAX_ROWS]:
-                d = dict(r)
-                if "city" in d and d["city"]:
-                    d["city"] = normalize_city(d["city"])
-                rows.append(d)
+                clean_d = sanitize_row_for_role(dict(r), role=caller_role)
+                rows.append(clean_d)
             con.close()
             result["columns"] = columns
             result["rows"] = rows

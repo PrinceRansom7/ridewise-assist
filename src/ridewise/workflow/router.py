@@ -25,6 +25,7 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from src.ridewise.auth.session import SessionRole, SessionState
 from src.ridewise.database.city import extract_city_from_text, normalize_city
+from src.ridewise.database.schema_retriever import generate_sql_from_embeddings
 from src.ridewise.database.sql_tool import format_result_for_llm, run_query
 from src.ridewise.llm.client import chat
 from src.ridewise.llm.prompts import build_rag_message, build_system_prompt
@@ -351,10 +352,7 @@ def process_message(user_msg: str, session: SessionState) -> str:
 
     # ── SQL tool ───────────────────────────────────────────────────────────────
     if intent["needs_db"]:
-        if session.is_customer:
-            sql = _build_customer_sql(session, user_msg)
-        else:
-            sql = _build_agent_general_sql(user_msg)
+        sql = generate_sql_from_embeddings(user_msg, session)
 
         if sql:
             result = run_query(sql, session=session)

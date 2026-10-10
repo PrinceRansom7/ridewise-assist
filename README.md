@@ -62,10 +62,16 @@ ridewise-assist/
 ├── documents/
 │   ├── source/                   # Original policy PDFs
 │   └── processed/                # (reserved for Docling structured output)
+├── docs/
+│   ├── data_sensitivity_matrix.md# Field-level sensitivity & access rules
+│   └── security_design.md        # Comprehensive security architecture
 ├── src/ridewise/
 │   ├── auth/session.py           # Session state and role management
 │   ├── database/
+│   │   ├── city.py               # City normalization (Bengaluru, Bangalore, BLR)
 │   │   ├── db.py                 # Read-only SQLite connection
+│   │   ├── sanitizer.py          # Field-level masking & PII protection
+│   │   ├── schema_retriever.py   # Embedding-driven schema retrieval & dynamic SQL
 │   │   └── sql_tool.py           # Safe SQL execution + ownership filter
 │   ├── retrieval/
 │   │   ├── ingest.py             # PDF ingestion pipeline
@@ -80,9 +86,10 @@ ridewise-assist/
 │   ├── ingest_documents.py       # Run this first to build the index
 │   └── evaluate_retrieval.py     # Retrieval quality evaluation
 └── tests/
-    ├── test_sql_safety.py        # SQL enforcement tests (53 tests)
-    ├── test_calculations.py      # Business logic tests
-    ├── test_authorization.py     # (extend as needed)
+    ├── test_calculations.py      # Business logic tests (37 tests)
+    ├── test_city_normalization.py# City normalization tests (4 tests)
+    ├── test_schema_retriever.py  # Schema embeddings & masking tests (5 tests)
+    └── test_sql_safety.py        # SQL enforcement & RLS tests (18 tests)
     └── test_end_to_end.py        # (extend as needed)
 ```
 

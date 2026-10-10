@@ -67,6 +67,16 @@ Getting these wrong would produce wrong financial advice. pytesseract was not in
 | No rate limiting on user queries | Low risk in hackathon context | Add st.session_state rate limiter in production |
 | `booked_at` is not stored in the router's DB query | Low — affects auto-calc trigger | Pass `booked_at` from the JOIN query result |
 
+## Decision 4: Embedding-driven Schema Retrieval for Dynamic SQL Generation and Agent Visibility
+
+**Decision:** Embed the `data_dictionary.md` tables using `sentence-transformers/all-MiniLM-L6-v2` and compare user query embeddings to retrieve relevant schema tables. Construct targeted SQL queries dynamically while enforcing customer isolation and field-level PII masking.
+
+**Rationale:**
+- Initial hardcoded SQL join anchored on `bookings` prevented support agents from viewing standalone vehicle fleet status, open damage claims, payments, and customer breakdowns.
+- Embedding table definitions allows the router to dynamically identify whether a query touches `vehicles`, `damage_reports`, `payments`, `customers`, or `bookings`.
+- Customer Row-Level Security (`_enforce_customer_ownership`) remains strictly enforced in Python before query execution, guaranteeing that dynamic SQL cannot leak cross-tenant data.
+- Field-level masking in `sanitizer.py` ensures phone numbers, emails, driving licenses, and transaction refs are automatically protected across customer and agent workflows.
+
 ---
 
 ## What I Would Improve Over the Next Week
