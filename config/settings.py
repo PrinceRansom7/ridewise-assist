@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 # ── Project root ──────────────────────────────────────────────────────────────
 # config/ is one level below the project root.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(PROJECT_ROOT / ".env", override=False)
+load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 # ── Database ──────────────────────────────────────────────────────────────────
 DB_PATH: Path = Path(os.getenv("DB_PATH", PROJECT_ROOT / "data" / "source" / "ridewise.db"))

@@ -16,6 +16,7 @@ build/
 venv/
 .venv/
 env/
+rideenv/
 
 # Generated indexes and caches
 data/processed/faiss_index/
